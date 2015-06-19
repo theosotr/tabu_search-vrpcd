@@ -211,7 +211,7 @@ def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
 
 def construct_primitive_solution(G, cross_dock, node_type, pair, dist):
     """
-    Constructs a fist solution for Clarke-Wrigjt algorithm.
+    Constructs a fist solution for Clarke-Wright algorithm.
 
     This solution uses for every pair of nodes (supplier-customer) a different
     vehicle to serve them.
