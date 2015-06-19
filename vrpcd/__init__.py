@@ -35,7 +35,7 @@ __author__ = 'Thodoris Sotiropoulos'
 
 def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
                       node_type='type', quantity='quantity', pair='pair',
-                      cons='consolidation', tolerance=20, L=12, k=2):
+                      cons='consolidation', tolerance=100, L=12, k=2):
     """
     Implementation of a Tabu Search algorithm for solving VRPCD.
     Algorithm uses a 2.5 opt move to generate neighbor solution at every
@@ -84,10 +84,13 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
                     cross_dock, G.node[u][pair])
                 vehicle_id += 1
 
-        used_vehicles = vehicle_id
         # Construct an initial-primitive solution.
         G = construct_primitive_solution(G, cross_dock, node_type, pair, dist)
-
+        G = clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
+                        quantity, pair, Q, T)
+        used_vehicles = sum(1 for vehicle in capacity.keys() if
+                            capacity[vehicle][0] != 0 and capacity[vehicle][1] != 0)
+    cost = sum(duration.values()) + used_vehicles ** k
     best_cost = float('inf')
     best_sol = None
     tabu_list = []
@@ -96,9 +99,10 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
     # Tabu algorithm's main loop.
     while max_iter < tolerance:
         try:
-            cost = _apply_move(G, cross_dock, best_cost, dist,
+            cost = _apply_move(G, cross_dock, cost, best_cost, dist,
                                tabu_list, capacity, duration, load, Q, T, L,
-                               node_type, quantity, cons, pair, used_vehicles, k)
+                               node_type, quantity, cons, pair, used_vehicles,
+                               k)
         except IOError:
             break
         if cost < best_cost:
@@ -108,12 +112,106 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
         else:
             max_iter += 1
 
-    return best_sol, best_cost
+    return best_sol, best_cost, capacity, duration
+
+
+def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
+                  quantity, pair, Q, T):
+    """
+    Implementation of Clarke-Wright algorithm to construct an initial solution
+    for Tabu Search local search algorithm.
+
+    :param G:, graph, a graph representing the initial-primitive solution needed
+    for this algorithm.
+    :param cross_dock: label of node representing cross-dock.
+    :param dist: array of distance between every pair of nodes.
+    :param duration, dict, duration of every vehicle's route.
+    :param capacity, array of used capacity of every vehicle.
+    :param node_type: string, optional (default='type').
+    Node data key corresponding to the type of node (supplier or customer).
+    :param quantity: string, optional (default='quantity').
+    Node data key corresponding to the quantity of node.
+    :param pair: string, optional (default='pair').
+    :param Q: int, maximum capacity for every vehicle.
+    :param T: int, maximum route duration.
+    :return: G, graph representing the initial solution for Tabu Search.
+    """
+    savings = {}
+    for u in G:
+        for v in G:
+            if u != cross_dock and v != cross_dock and u != v \
+                    and G.node[u][node_type] == G.node[v][node_type]:
+                pair_u = G.node[u][pair]
+                pair_v = G.node[v][pair]
+                savings[(u, v)] = dist(cross_dock, u) + dist(cross_dock, v) \
+                                  - dist(u, v) + dist(cross_dock, pair_u) \
+                                  + dist(cross_dock, pair_v) - dist(pair_u,
+                                                                    pair_v)
+
+    import operator
+
+    sorted_savings = sorted(savings.items(), key=operator.itemgetter(1),
+                            reverse=True)
+
+    for (u, v), savings in sorted_savings:
+        pair_u = G.node[u][pair]
+        pair_v = G.node[v][pair]
+        if (G.has_edge(cross_dock, u)) and (G.has_edge(v, cross_dock))\
+                and (not G.has_edge(u, v)):
+            index, pair_index = (0, 1) if G.node[v][node_type] == 'pickup' else (1, 0)
+
+            # Check if vehicle's capacity is sufficient to service new node.
+            if capacity[G.node[v]['vehicle']][index] + G.node[u][quantity] > Q \
+                    and capacity[G.node[pair_v]['vehicle']][pair_index] + \
+                            G.node[u][quantity] > Q:
+                continue
+
+            # Initialize object to check the feasibility of solution
+            # based on its duration.
+            if duration[G.node[v]['vehicle']] + (
+                    dist(pair_u, pair_v) + dist(u, v) - dist(cross_dock, v)) - (
+                    dist(cross_dock, pair_v) + dist(cross_dock, u)
+                    + dist(cross_dock, pair_u)) > T:
+                continue
+
+            if not G.has_edge(u, cross_dock) or not G.has_edge(cross_dock, v) \
+                    or not G.has_edge(pair_u, cross_dock) or not G.has_edge(
+                    cross_dock, pair_v):
+                continue
+
+            # Update capacity of vehicles.
+            capacity[G.node[v]['vehicle']][index] += G.node[u][quantity]
+            capacity[G.node[v]['vehicle']][pair_index] += G.node[u][quantity]
+            capacity[G.node[u]['vehicle']][index] -= G.node[u][quantity]
+            capacity[G.node[u]['vehicle']][pair_index] -= G.node[u][quantity]
+
+            # Update duration of vehicles.
+            duration[G.node[v]['vehicle']] += (
+                dist(pair_u, pair_v) + dist(u, v) - dist(cross_dock, v) - dist(
+                cross_dock, pair_v) + dist(cross_dock, u) + dist(cross_dock, pair_u))
+            duration[G.node[u]['vehicle']] -= (
+                dist(u, cross_dock) + dist(cross_dock, u)) + (
+                dist(pair_u, cross_dock) + dist(cross_dock, pair_u))
+
+            # Update solution.
+            G.node[u]['vehicle'] = G.node[v]['vehicle']
+            G.node[pair_u]['vehicle'] = G.node[v]['vehicle']
+            G.remove_edge(u, cross_dock)
+            G.remove_edge(cross_dock, v)
+            G.edge[cross_dock][u]['vehicle'] = G.node[v]['vehicle']
+            G.edge[cross_dock][pair_u]['vehicle'] = G.node[v]['vehicle']
+            G.add_edge(u, v, weight=dist(u, v), type=G.node[v][node_type],
+                       vehicle=G.node[v]['vehicle'])
+            G.remove_edge(pair_u, cross_dock)
+            G.remove_edge(cross_dock, pair_v)
+            G.add_edge(pair_u, pair_v, weight=dist(pair_u, pair_v),
+                       type=G.node[pair_v][node_type], vehicle=G.node[v]['vehicle'])
+    return G
 
 
 def construct_primitive_solution(G, cross_dock, node_type, pair, dist):
     """
-    Constructs a fist solution for Tabu Search algorithm.
+    Constructs a fist solution for Clarke-Wrigjt algorithm.
 
     This solution uses for every pair of nodes (supplier-customer) a different
     vehicle to serve them.
@@ -145,7 +243,7 @@ def construct_primitive_solution(G, cross_dock, node_type, pair, dist):
     return G
 
 
-def _apply_move(G, cross_dock, min_cost, dist, tabu_list, capacity,
+def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
                 duration, load, Q, T, L, node_type, quantity, cons, pair, used,
                 k):
     """
@@ -204,7 +302,7 @@ def _apply_move(G, cross_dock, min_cost, dist, tabu_list, capacity,
                 continue
 
             # Initialize object to check the feasibility of solution
-            #  based on its duration.
+            # based on its duration.
             checker = TimeChecker(G, cross_dock, data['vehicle'],
                                   node_data['vehicle'],
                                   G.node[node_data[pair]]['vehicle'], n,
@@ -226,10 +324,11 @@ def _apply_move(G, cross_dock, min_cost, dist, tabu_list, capacity,
                                     checker.pair_vehicle]) + used_vehicles ** k
 
             if neighbor_cost < min_neighbor_cost:
-
                 # Check if best (so far neighbor solution) is in the tabu list.
-                if any((u, (n, v)) == tabu[0] or (v, (u, n)) == tabu[1]
-                       for tabu in tabu_list) and (neighbor_cost >= min_cost):
+                if any((u, (n, v)) == tabu[0] or (v, (u, n)) == tabu[1] or (
+                        n, (u, v)) == tabu[2]
+                       for tabu in tabu_list) and (
+                                neighbor_cost + cost >= min_cost):
                     continue
 
                 min_neighbor_move = (n, u, v, node_data[node_type],
@@ -250,7 +349,7 @@ def _apply_move(G, cross_dock, min_cost, dist, tabu_list, capacity,
         raise IOError('No any feasible neighbor solution found.')
 
     # Adapt graph based on the current solution which is the best neighbor
-    #  solution.
+    # solution.
     update_edges(G, min_neighbor_move, dist)
     update_node_data(G, cross_dock, min_neighbor_move[0], vehicles,
                      new_durations,
@@ -272,7 +371,7 @@ def update_tabu_list(neighbor_move, tabu_list, L):
     n, u, v, node_type, vehicle = neighbor_move
     if len(tabu_list) >= L:
         tabu_list.pop(0)
-    tabu_list.append(((u, (n, v)), (v, (u, n))))
+    tabu_list.append(((u, (n, v)), (v, (u, n)), (n, (v, u))))
 
 
 def update_node_data(G, cross_dock, n, vehicles, new_durations,
