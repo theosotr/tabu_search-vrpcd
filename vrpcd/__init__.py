@@ -27,7 +27,6 @@ For information about VRPCD see below:
 http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.87.1498
 
 """
-
 import math
 
 __author__ = 'Thodoris Sotiropoulos'
@@ -35,7 +34,8 @@ __author__ = 'Thodoris Sotiropoulos'
 
 def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
                       node_type='type', quantity='quantity', pair='pair',
-                      cons='consolidation', tolerance=100, L=12, k=2):
+                      cons='consolidation', tolerance=100, L=12, k=2,
+                      diversification_iter=None):
     """
     Implementation of a Tabu Search algorithm for solving VRPCD.
     Algorithm uses a 2.5 opt move to generate neighbor solution at every
@@ -66,6 +66,9 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
     Maximum length of tabu list.
     :param k:, int, optional (default=2)
     Constant representing the significance to use less vehicles.
+    :param diversification_iter: int, optional (default=None)
+    Iterations of diversification process. If ``None`` as many as ``tolerance``
+    diversification iterations will be completed.
     :return: G, graph representing the best solution, float, cost of best
     solution.
     """
@@ -90,29 +93,49 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
                         quantity, pair, Q, T)
         used_vehicles = sum(1 for vehicle in capacity.keys() if
                             capacity[vehicle][0] != 0 and capacity[vehicle][1] != 0)
+    frequency = {(u, v): 1 if G.has_edge(u, v) else 0 for u in G for v in G}
+
     cost = sum(duration.values()) + used_vehicles ** k
     best_cost = float('inf')
     best_sol = None
     tabu_list = []
     max_iter = 0
+    diversification_process = False
+    diver_iter = 0
+    diversification_iter = tolerance if diversification_iter is None\
+        else diversification_iter
 
     # Tabu algorithm's main loop.
     while max_iter < tolerance:
+
         try:
             cost = _apply_move(G, cross_dock, cost, best_cost, dist,
-                               tabu_list, capacity, duration, load, Q, T, L,
+                               tabu_list, capacity, duration, frequency, load, Q, T, L,
                                node_type, quantity, cons, pair, used_vehicles,
-                               k)
+                               k, diversification=diversification_process)
         except IOError:
             break
+
         if cost < best_cost:
             max_iter = 0
             best_cost = cost
             best_sol = G.copy()
         else:
-            max_iter += 1
+            if not diversification_process:
+                max_iter += 1
+        # Count diversification iterations.
+        if diversification_process:
+            diver_iter += 1
+            if diver_iter == diversification_iter:
+                diversification_process = False
 
-    return best_sol, best_cost, capacity, duration
+        # Activate diversification process.
+        if max_iter == tolerance and diversification_iter == 0:
+            if not diversification_process:
+                max_iter = 0
+            diversification_process = True
+
+    return best_sol, best_cost
 
 
 def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
@@ -244,8 +267,8 @@ def construct_primitive_solution(G, cross_dock, node_type, pair, dist):
 
 
 def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
-                duration, load, Q, T, L, node_type, quantity, cons, pair, used,
-                k):
+                duration, frequency, load, Q, T, L, node_type, quantity, cons, pair, used,
+                k, diversification):
     """
     Apply a move to a current solution to generate neighbor solutions.
 
@@ -275,6 +298,8 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
     :param cons: string, node data key corresponding to the number of
     loads/unloads every vehicle does at the cross-dock.
     :param used: int, number of used vehicles on current solution.
+    :param diversification: bool, If True search for solution which been rarely
+    on previous solutions.
     :param k: int, constant representing the significance to use less vehicles.
     :return Cost of best neighbor solution (which is now current solution for
     next iteration of the algorithm.
@@ -315,20 +340,25 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
             withdrawn = True if sum(capacity[node_data['vehicle']]) \
                                 - node_data[quantity] == 0 else False
             used_vehicles = used - 1 if withdrawn else used
+
+            # Set extra cost for edges which have been previously appeared
+            #  in many solution.
+            frq_cost = 0 if not diversification else (frequency[(u, n)] + frequency[n, v]) ** 2
+
             # Calculate overall cost of neighbor's solution.
             neighbor_cost = (checker.new_vehicle_dur - duration[
                 checker.vehicle]) + (
                 checker.previous_vehicle_dur - duration[
                     checker.previous_vehicle]) + (
                                 checker.pair_vehicle_dur - duration[
-                                    checker.pair_vehicle]) + used_vehicles ** k
+                                    checker.pair_vehicle]) + used_vehicles ** k + frq_cost
 
             if neighbor_cost < min_neighbor_cost:
                 # Check if best (so far neighbor solution) is in the tabu list.
                 if any((u, (n, v)) == tabu[0] or (v, (u, n)) == tabu[1] or (
                         n, (u, v)) == tabu[2]
                        for tabu in tabu_list) and (
-                                neighbor_cost + cost >= min_cost):
+                                neighbor_cost + cost - frq_cost >= min_cost):
                     continue
 
                 min_neighbor_move = (n, u, v, node_data[node_type],
@@ -350,7 +380,7 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
 
     # Adapt graph based on the current solution which is the best neighbor
     # solution.
-    update_edges(G, min_neighbor_move, dist)
+    update_edges(G, min_neighbor_move, dist, frequency)
     update_node_data(G, cross_dock, min_neighbor_move[0], vehicles,
                      new_durations,
                      consolidations, capacity, duration, best, node_type,
@@ -411,11 +441,10 @@ def update_node_data(G, cross_dock, n, vehicles, new_durations,
         pair_index = 0 if best == 1 else 1
         G.node[cross_dock][cons][vehicles[0]][best] = new_consolidations[0]
         G.node[cross_dock][cons][vehicles[1]][best] = new_consolidations[1]
-        G.node[cross_dock][cons][vehicles[2]][pair_index] = new_consolidations[
-            2]
+        G.node[cross_dock][cons][vehicles[2]][pair_index] = new_consolidations[2]
 
 
-def update_edges(G, best_neighbor, dist):
+def update_edges(G, best_neighbor, dist, frequency):
     """
     Updates edges (edges removal/addition) to be compatible with the best
      neighbor solution (current solution for next iteration).
@@ -431,10 +460,13 @@ def update_edges(G, best_neighbor, dist):
     G.remove_edge(n, succ)
     G.remove_edge(pred, n)
     if pred != succ:
+        frequency[(pred, succ)] += 1
         G.add_edge(pred, succ, weight=dist(pred, succ), type=node_type,
                    vehicle=G.node[n]['vehicle'])
     G.add_edge(u, n, weight=dist(u, n), type=node_type, vehicle=vehicle)
     G.add_edge(n, v, weight=dist(n, v), type=node_type, vehicle=vehicle)
+    frequency[(u, n)] += 1
+    frequency[(n, v)] += 1
 
 
 class TimeChecker:
@@ -533,14 +565,14 @@ class TimeChecker:
         vehicle.
         """
         self.init_cd_consolidations()
-        (cd_vehicle, n_cd_vehicle), (cd_previous, n_cd_previous), cd_pair \
+        (cd_vehicle, n_cd_vehicle), (cd_previous, n_cd_previous), (cd_pair, n_cd_pair)\
             = self.init_cd_diff_times(load, quantity)
         vehicle_at_cd = 0
         pair_vehicle_at_cd = 0
         previous_vehicle_at_cd = 0
         if self.previous_vehicle != self.vehicle:
             if self.previous_vehicle == self.pair_vehicle:
-                previous_vehicle_at_cd = cd_previous
+                previous_vehicle_at_cd = cd_pair
                 self.consolidation_pair += 1
             else:
                 self.consolidation_previous -= 1
@@ -548,7 +580,7 @@ class TimeChecker:
         if self.vehicle == self.pair_vehicle:
             if self.vehicle != self.previous_vehicle:
                 self.consolidation_pair -= 1
-                vehicle_at_cd = n_cd_vehicle
+                vehicle_at_cd = n_cd_pair
         else:
             if self.vehicle != self.previous_vehicle:
                 self.consolidation_vehicle += 1
@@ -586,5 +618,6 @@ class TimeChecker:
         cd_previous = diff1 if self.consolidation_previous == 0 else diff2
         negative_cd_previous = -diff1 if self.consolidation_previous == 1 else -diff2
         cd_pair = diff1 if self.consolidation_pair == 0 else diff2
+        negative_cd_pair = -diff1 if self.consolidation_pair == 1 else - diff2
         return (cd_vehicle, negative_cd_vehicle), \
-               (cd_previous, negative_cd_previous), cd_pair
+               (cd_previous, negative_cd_previous), (cd_pair, negative_cd_pair)
