@@ -67,18 +67,21 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
     Maximum length of tabu list.
     :param k:, int, optional (default=2)
     Constant representing the significance to use less vehicles.
+    :param a: int, optional (default=2)
+    Constant representing the significance on finding less frequent edges during
+    on the diversification process.
     :param diversification_iter: int, optional (default=None)
     Iterations of diversification process. If ``None`` as many as ``tolerance``
     diversification iterations will be completed.
     :return: G, graph representing the best solution, float, cost of best
     solution.
     """
-    distance = lambda u, v: (math.sqrt((G.node[u][px] - G.node[v][px]) ** 2 + (
-        G.node[u][py] - G.node[v][py]) ** 2.0))
+    # Calculate distance for every pair of nodes and save it in a dictionary.
     dist = defaultdict(dict)
     for u in G:
         for v in G:
-            dist[u][v] = distance(u, v)
+            dist[u][v] = math.sqrt((G.node[u][px] - G.node[v][px]) ** 2 + (
+        G.node[u][py] - G.node[v][py]) ** 2.0)
 
     if G.number_of_edges() == 0:
         vehicle_id = 0
@@ -308,6 +311,8 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
     :param diversification: bool, If True search for solution which been rarely
     on previous solutions.
     :param k: int, constant representing the significance to use less vehicles.
+    :param a: int, constant representing the significance on finding less
+    frequent edges during on the diversification process.
     :return Cost of best neighbor solution (which is now current solution for
     next iteration of the algorithm.
     :raise IOError when no feasible neighbor solution can be found.
