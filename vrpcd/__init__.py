@@ -675,8 +675,8 @@ class TimeChecker:
                 else pickup_tour[self.pair_vehicle]
             pick = pickup_tour[self.vehicle] + variation_vehicle if self.type == 'pickup'\
                 else pickup_tour[self.vehicle]
-            if self.type == 'pickup' and pick > pair_pick:
+            if self.type == 'pickup' and 0 < pair_pick < pick:
                 return False
-            if self.type == 'delivery' and pair_pick > pick:
+            if self.type == 'delivery' and 0 < pick < pair_pick:
                 return False
         return True
