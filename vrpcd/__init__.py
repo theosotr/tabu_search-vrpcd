@@ -30,6 +30,7 @@ http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.87.1498
 from collections import defaultdict
 import math
 
+__version__ = '0.1'
 __author__ = 'Thodoris Sotiropoulos'
 
 
