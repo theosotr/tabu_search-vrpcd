@@ -35,6 +35,26 @@ __version__ = '0.1'
 __author__ = 'Thodoris Sotiropoulos'
 
 
+def _get_routing(G, cross_dock):
+    def get_path(u):
+        path = [u]
+        if u == cross_dock:
+            return []
+        next_nodes = G.edge[u].keys()
+        assert len(next_nodes) == 1
+        path.extend(get_path(next_nodes[0]))
+        return path
+
+    routing = defaultdict(lambda: [[], []])
+    for v, data in G.edge[cross_dock].iteritems():
+        vehicle = data[utils.VEHICLE]
+        route_type = data[utils.NODE_TYPE]
+        index = route_type - 1
+        path = get_path(v)
+        routing[vehicle][index] = path
+    return routing.values()
+
+
 def tabu_search_vrpcd(G, cross_dock, Q, T, load, tolerance=20, L=12, k=2, a=10,
                       diversification_iter=0):
     """
@@ -130,7 +150,7 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, tolerance=20, L=12, k=2, a=10,
                 max_iter = 0
             diversification_process = True
 
-    return best_sol, best_cost
+    return best_sol, best_cost, _get_routing(best_sol, cross_dock)
 
 
 def clarke_wright(G, cross_dock, dist, duration, capacity, Q, T):
