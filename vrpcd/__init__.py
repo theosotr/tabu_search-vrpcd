@@ -104,12 +104,12 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, tolerance=20, L=12, k=2, a=10,
     # Tabu algorithm's main loop.
     while max_iter < tolerance:
 
-        try:
-            cost = _apply_move(G, cross_dock, cost, best_cost, dist,
-                               tabu_list, capacity, duration, frequency,
-                               pickup_tour, load, Q, T, L,
-                               used_vehicles, k, a, diversification_process)
-        except IOError:
+        cost = _apply_move(G, cross_dock, cost, best_cost, dist,
+                           tabu_list, capacity, duration, frequency,
+                           pickup_tour, load, Q, T, L,
+                           used_vehicles, k, a, diversification_process)
+        if cost is None:
+            # Not any feasible solution found.
             break
         if cost < best_cost:
             max_iter = 0
@@ -289,7 +289,6 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
     frequent edges during on the diversification process.
     :return Cost of best neighbor solution (which is now current solution for
     next iteration of the algorithm.
-    :raise IOError when no feasible neighbor solution can be found.
     """
     min_neighbor_cost = float('inf')
     min_neighbor_move = ()
@@ -362,7 +361,7 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
                 withdrawn_vehicle = withdrawn
 
     if min_neighbor_move == ():
-        raise IOError('No any feasible neighbor solution found.')
+        return None
 
     # Adapt graph based on the current solution which is the best neighbor
     # solution.
