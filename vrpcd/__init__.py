@@ -29,14 +29,13 @@ http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.87.1498
 """
 from collections import defaultdict
 import math
+from vrpcd import utils
 
 __version__ = '0.1'
 __author__ = 'Thodoris Sotiropoulos'
 
 
-def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
-                      node_type='type', quantity='quantity', pair='pair',
-                      cons='consolidation', tolerance=20, L=12, k=2, a=10,
+def tabu_search_vrpcd(G, cross_dock, Q, T, load, tolerance=20, L=12, k=2, a=10,
                       diversification_iter=0):
     """
     Implementation of a Tabu Search algorithm for solving VRPCD.
@@ -48,19 +47,6 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
     :param Q: int, maximum capacity for every vehicle.
     :param T: int, maximum route duration.
     :param load: int, constant time of load's preparation.
-    :param px: string, optional (default='px').
-    Node data key corresponding to the position of node to x-axis.
-    :param py: string, optional (default='py').
-    Node data key corresponding to the position of node to y-axis.
-    :param node_type: string, optional (default='type').
-    Node data key corresponding to the type of node (supplier or customer).
-    :param quantity: string, optional (default='quantity').
-    Node data key corresponding to the quantity of node.
-    :param pair: string, optional (default='pair').
-    Node data key corresponding to the label of node's pair.
-    :param cons: string, optional (default='consolidation')
-    Node data key corresponding to the number of loads/unloads every vehicle
-    does at the cross-dock.
     :param tolerance: int, optional (default=20)
     Number of consecutive iterations of algorithm loop that cost of best
     solution is not decreased.
@@ -81,28 +67,28 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
     dist = defaultdict(dict)
     for u in G:
         for v in G:
-            dist[u][v] = math.sqrt((G.node[u][px] - G.node[v][px]) ** 2 + (
-        G.node[u][py] - G.node[v][py]) ** 2.0)
+            dist[u][v] = math.sqrt((G.node[u][utils.X_AXIS] - G.node[v][utils.X_AXIS]) ** 2 + (
+        G.node[u][utils.Y_AXIS] - G.node[v][utils.Y_AXIS]) ** 2.0)
 
     if G.number_of_edges() == 0:
         vehicle_id = 0
         capacity = {}
         duration = {}
         for u in G:
-            if G.node[u][node_type] == 'pickup':
-                capacity[vehicle_id] = [G.node[u][quantity],
-                                        G.node[u][quantity]]
+            if G.node[u][utils.NODE_TYPE] == utils.SUPPLIER:
+                capacity[vehicle_id] = [G.node[u][utils.QUANTITY],
+                                        G.node[u][utils.QUANTITY]]
                 duration[vehicle_id] = 2 * dist[cross_dock][u]\
-                                       + 2 * dist[cross_dock][G.node[u][pair]]
+                                       + 2 * dist[cross_dock][G.node[u][utils.PAIR]]
                 vehicle_id += 1
 
         # Construct an initial-primitive solution.
-        G = construct_primitive_solution(G, cross_dock, node_type, pair, dist)
+        G = construct_primitive_solution(G, cross_dock, dist)
         used_vehicles = sum(1 for vehicle in capacity.keys() if
                             capacity[vehicle][0] != 0 and capacity[vehicle][1] != 0)
     frequency = {(u, v): 1 if G.has_edge(u, v) else 0 for u in G for v in G}
     pickup_tour = {i: sum(data['weight'] for u, v, data in G.edges(data=True)
-                          if data[node_type] == 'pickup' and data['vehicle'] == i)
+                          if data[utils.NODE_TYPE] == utils.SUPPLIER and data[utils.VEHICLE] == i)
                    for i in duration.keys()}
 
     cost = sum(duration.values())
@@ -121,9 +107,8 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
         try:
             cost = _apply_move(G, cross_dock, cost, best_cost, dist,
                                tabu_list, capacity, duration, frequency,
-                               pickup_tour, load, Q, T, L, node_type, quantity,
-                               cons, pair, used_vehicles, k, a,
-                               diversification_process)
+                               pickup_tour, load, Q, T, L,
+                               used_vehicles, k, a, diversification_process)
         except IOError:
             break
         if cost < best_cost:
@@ -148,8 +133,7 @@ def tabu_search_vrpcd(G, cross_dock, Q, T, load, px='px', py='py',
     return best_sol, best_cost
 
 
-def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
-                  quantity, pair, Q, T):
+def clarke_wright(G, cross_dock, dist, duration, capacity, Q, T):
     """
     Implementation of Clarke-Wright algorithm to construct an initial solution
     for Tabu Search local search algorithm.
@@ -160,11 +144,6 @@ def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
     :param dist: array of distance between every pair of nodes.
     :param duration, dict, duration of every vehicle's route.
     :param capacity, array of used capacity of every vehicle.
-    :param node_type: string, optional (default='type').
-    Node data key corresponding to the type of node (supplier or customer).
-    :param quantity: string, optional (default='quantity').
-    Node data key corresponding to the quantity of node.
-    :param pair: string, optional (default='pair').
     :param Q: int, maximum capacity for every vehicle.
     :param T: int, maximum route duration.
     :return: G, graph representing the initial solution for Tabu Search.
@@ -173,9 +152,9 @@ def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
     for u in G:
         for v in G:
             if u != cross_dock and v != cross_dock and u != v \
-                    and G.node[u][node_type] == G.node[v][node_type]:
-                pair_u = G.node[u][pair]
-                pair_v = G.node[v][pair]
+                    and G.node[u][utils.NODE_TYPE] == G.node[v][utils.NODE_TYPE]:
+                pair_u = G.node[u][utils.PAIR]
+                pair_v = G.node[v][utils.PAIR]
                 savings[(u, v)] = dist[cross_dock][u] + dist[cross_dock][v] \
                                   - dist[u][v] + dist[cross_dock][pair_u] \
                                   + dist[cross_dock][pair_v] - dist[pair_u][pair_v]
@@ -186,21 +165,22 @@ def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
                             reverse=True)
 
     for (u, v), savings in sorted_savings:
-        pair_u = G.node[u][pair]
-        pair_v = G.node[v][pair]
+        pair_u = G.node[u][utils.PAIR]
+        pair_v = G.node[v][utils.PAIR]
         if (G.has_edge(cross_dock, u)) and (G.has_edge(v, cross_dock))\
                 and (not G.has_edge(u, v)):
-            index, pair_index = (0, 1) if G.node[v][node_type] == 'pickup' else (1, 0)
+            index, pair_index = (0, 1)\
+                if G.node[v][utils.NODE_TYPE] == utils.SUPPLIER else (1, 0)
 
             # Check if vehicle's capacity is sufficient to service new node.
-            if capacity[G.node[v]['vehicle']][index] + G.node[u][quantity] > Q \
-                    and capacity[G.node[pair_v]['vehicle']][pair_index] + \
-                            G.node[u][quantity] > Q:
+            if capacity[G.node[v][utils.VEHICLE]][index] + G.node[u][utils.QUANTITY] > Q \
+                    and capacity[G.node[pair_v][utils.VEHICLE]][pair_index] + \
+                            G.node[u][utils.QUANTITY] > Q:
                 continue
 
             # Initialize object to check the feasibility of solution
             # based on its duration.
-            if duration[G.node[v]['vehicle']] + (
+            if duration[G.node[v][utils.VEHICLE]] + (
                     dist[pair_u][pair_v] + dist[u][v] - dist[cross_dock][v]) - (
                     dist[cross_dock][pair_v] + dist[cross_dock][u]
                     + dist[cross_dock][pair_u]) > T:
@@ -212,36 +192,36 @@ def clarke_wright(G, cross_dock, dist, duration, capacity, node_type,
                 continue
 
             # Update capacity of vehicles.
-            capacity[G.node[v]['vehicle']][index] += G.node[u][quantity]
-            capacity[G.node[v]['vehicle']][pair_index] += G.node[u][quantity]
-            capacity[G.node[u]['vehicle']][index] -= G.node[u][quantity]
-            capacity[G.node[u]['vehicle']][pair_index] -= G.node[u][quantity]
+            capacity[G.node[v][utils.VEHICLE]][index] += G.node[u][utils.QUANTITY]
+            capacity[G.node[v][utils.VEHICLE]][pair_index] += G.node[u][utils.QUANTITY]
+            capacity[G.node[u][utils.VEHICLE]][index] -= G.node[u][utils.QUANTITY]
+            capacity[G.node[u][utils.VEHICLE]][pair_index] -= G.node[u][utils.QUANTITY]
 
             # Update duration of vehicles.
-            duration[G.node[v]['vehicle']] += (
+            duration[G.node[v][utils.VEHICLE]] += (
                 dist[pair_u][pair_v] + dist[u][v] - dist[cross_dock][v]
                 - dist[cross_dock][pair_v] + dist[cross_dock][u] + dist[cross_dock][pair_u])
-            duration[G.node[u]['vehicle']] -= (
+            duration[G.node[u][utils.VEHICLE]] -= (
                 dist[u][cross_dock] + dist[cross_dock][u]) + (
                 dist[pair_u][cross_dock] + dist[cross_dock][pair_u])
 
             # Update solution.
-            G.node[u]['vehicle'] = G.node[v]['vehicle']
-            G.node[pair_u]['vehicle'] = G.node[v]['vehicle']
+            G.node[u][utils.VEHICLE] = G.node[v][utils.VEHICLE]
+            G.node[pair_u][utils.VEHICLE] = G.node[v][utils.VEHICLE]
             G.remove_edge(u, cross_dock)
             G.remove_edge(cross_dock, v)
-            G.edge[cross_dock][u]['vehicle'] = G.node[v]['vehicle']
-            G.edge[cross_dock][pair_u]['vehicle'] = G.node[v]['vehicle']
-            G.add_edge(u, v, weight=dist[u][v], type=G.node[v][node_type],
-                       vehicle=G.node[v]['vehicle'])
+            G.edge[cross_dock][u][utils.VEHICLE] = G.node[v][utils.VEHICLE]
+            G.edge[cross_dock][pair_u][utils.VEHICLE] = G.node[v][utils.VEHICLE]
+            G.add_edge(u, v, weight=dist[u][v], type=G.node[v][utils.NODE_TYPE],
+                       vehicle=G.node[v][utils.VEHICLE])
             G.remove_edge(pair_u, cross_dock)
             G.remove_edge(cross_dock, pair_v)
             G.add_edge(pair_u, pair_v, weight=dist[pair_u][pair_v],
-                       type=G.node[pair_v][node_type], vehicle=G.node[v]['vehicle'])
+                       type=G.node[pair_v][utils.NODE_TYPE], vehicle=G.node[v][utils.VEHICLE])
     return G
 
 
-def construct_primitive_solution(G, cross_dock, node_type, pair, dist):
+def construct_primitive_solution(G, cross_dock, dist):
     """
     Constructs a fist solution for Clarke-Wright algorithm.
 
@@ -250,34 +230,32 @@ def construct_primitive_solution(G, cross_dock, node_type, pair, dist):
 
     :param G: graph, a graph with nodes which represents suppliers and customers.
     :param cross_dock: label of node which represents cross-dock.
-    :param node_type: string , node data key corresponding to the type of node
-    (supplier or customer).
     :param pair: string, node data key corresponding to the label of node's pair.
     :param dist: array of distance between every pair of nodes.
     """
     vehicle_id = 0
     for u in G:
-        if G.node[u][node_type] == 'pickup':
-            pair_node = G.node[u][pair]
-            G.node[u]['vehicle'] = vehicle_id
-            G.node[pair_node]['vehicle'] = vehicle_id
+        if G.node[u][utils.NODE_TYPE] == utils.SUPPLIER:
+            pair_node = G.node[u][utils.PAIR]
+            G.node[u][utils.VEHICLE] = vehicle_id
+            G.node[pair_node][utils.VEHICLE] = vehicle_id
             G.add_edge(cross_dock, u, weight=dist[cross_dock][u],
-                       type=G.node[u][node_type], vehicle=vehicle_id)
+                       type=G.node[u][utils.NODE_TYPE], vehicle=vehicle_id)
             G.add_edge(u, cross_dock, weight=dist[u][cross_dock],
-                       type=G.node[u][node_type], vehicle=vehicle_id)
+                       type=G.node[u][utils.NODE_TYPE], vehicle=vehicle_id)
             G.add_edge(cross_dock, pair_node,
                        weight=dist[cross_dock][pair_node],
-                       type=G.node[pair_node][node_type], vehicle=vehicle_id)
+                       type=G.node[pair_node][utils.NODE_TYPE], vehicle=vehicle_id)
             G.add_edge(pair_node, cross_dock,
                        weight=dist[pair_node][cross_dock],
-                       type=G.node[pair_node][node_type], vehicle=vehicle_id)
+                       type=G.node[pair_node][utils.NODE_TYPE], vehicle=vehicle_id)
             vehicle_id += 1
     return G
 
 
 def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
-                duration, frequency, pickup, load, Q, T, L, node_type, quantity,
-                cons, pair, used, k, a, diversification):
+                duration, frequency, pickup, load, Q, T, L, used,
+                k, a, diversification):
     """
     Apply a move to a current solution to generate neighbor solutions.
 
@@ -302,11 +280,6 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
     :param Q, int, maximum vehicle capacity.
     :param T, int maximum route duration for every vehicle.
     :param L, int, maximum length of tabu list.
-    :param node_type: string, node data key corresponding to the type of node
-    (supplier or customer).
-    :param quantity: string, node data key corresponding to the quantity of node.
-    :param pair: string, node data key corresponding to the label of node's pair.
-    :param cons: string, node data key corresponding to the number of
     loads/unloads every vehicle does at the cross-dock.
     :param used: int, number of used vehicles on current solution.
     :param diversification: bool, If True search for solution which been rarely
@@ -327,31 +300,31 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
             continue
 
         for u, v, data in G.edges(data=True):
-            if data[node_type] != node_data[node_type]:
+            if data[utils.NODE_TYPE] != node_data[utils.NODE_TYPE]:
                 continue
 
             if n == u or n == v:
                 continue
 
-            index = 0 if data[node_type] == 'pickup' else 1
+            index = 0 if data[utils.NODE_TYPE] == utils.SUPPLIER else 1
 
             # Check if vehicle's capacity is sufficient to service new node.
-            if capacity[data['vehicle']][index] + node_data[quantity] > Q:
+            if capacity[data[utils.VEHICLE]][index] + node_data[utils.QUANTITY] > Q:
                 continue
 
             # Initialize object to check the feasibility of solution
             # based on its duration.
-            checker = TimeChecker(G, cross_dock, data['vehicle'],
-                                  node_data['vehicle'],
-                                  G.node[node_data[pair]]['vehicle'], n,
-                                  duration, node_type, cons)
+            checker = TimeChecker(G, cross_dock, data[utils.VEHICLE],
+                                  node_data[utils.VEHICLE],
+                                  G.node[node_data[utils.PAIR]][utils.VEHICLE], n,
+                                  duration)
 
             # Check if vehicle's total duration does not surpress T.
-            if not checker.is_feasible(dist, u, v, node_data[quantity],
+            if not checker.is_feasible(dist, u, v, node_data[utils.QUANTITY],
                                        load, T, pickup):
                 continue
-            withdrawn = True if sum(capacity[node_data['vehicle']]) \
-                                - node_data[quantity] == 0 else False
+            withdrawn = True if sum(capacity[node_data[utils.VEHICLE]]) \
+                                - node_data[utils.QUANTITY] == 0 else False
             used_vehicles = used - 1 if withdrawn else used
 
             # Set extra cost for edges which have been previously appeared
@@ -374,8 +347,8 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
                                 neighbor_cost + cost - frq_cost >= min_cost):
                     continue
 
-                min_neighbor_move = (n, u, v, node_data[node_type],
-                                     data['vehicle'])
+                min_neighbor_move = (n, u, v, node_data[utils.NODE_TYPE],
+                                     data[utils.VEHICLE])
                 min_neighbor_cost = neighbor_cost
                 best = index
                 vehicles = checker.vehicle, checker.previous_vehicle, \
@@ -395,9 +368,7 @@ def _apply_move(G, cross_dock, cost, min_cost, dist, tabu_list, capacity,
     # solution.
     update_edges(G, min_neighbor_move, dist, frequency, pickup)
     update_node_data(G, cross_dock, min_neighbor_move[0], vehicles,
-                     new_durations,
-                     consolidations, capacity, duration, best, node_type,
-                     quantity, cons)
+                     new_durations, consolidations, capacity, duration, best)
     update_tabu_list(min_neighbor_move, tabu_list, L)
     used -= 1 if withdrawn_vehicle else 0
     return sum(duration.values())
@@ -411,15 +382,14 @@ def update_tabu_list(neighbor_move, tabu_list, L):
     :param tabu_list: list, current tabu list
     :param L: int, maximum length of tabu list.
     """
-    n, u, v, node_type, vehicle = neighbor_move
+    n, u, v, _, _ = neighbor_move
     if len(tabu_list) >= L:
         tabu_list.pop(0)
     tabu_list.append(((u, (n, v)), (v, (u, n)), (n, (v, u))))
 
 
 def update_node_data(G, cross_dock, n, vehicles, new_durations,
-                     new_consolidations, capacity, duration, best, node_type,
-                     quantity, cons):
+                     new_consolidations, capacity, duration, best):
     """
     Updates data of node to be compatible with the best neighbor solution
     (current solution for next iteration).
@@ -438,23 +408,18 @@ def update_node_data(G, cross_dock, n, vehicles, new_durations,
     :param best: int, index which defines if there was an addition/deletion to
     the number of unloads or loads which is defined by the best neighbor
     solution.
-    :param node_type: string, node data key corresponding to the type of node
-    (supplier or customer).
-    :param quantity: string, node data key corresponding to the quantity of node.
-    :param cons: string, node data key corresponding to the number of
-    loads/unloads every vehicle does at the cross-dock.
     """
-    if G.node[n]['vehicle'] != vehicles[0]:
-        index = 0 if G.node[n][node_type] == 'pickup' else 1
-        capacity[G.node[n]['vehicle']][index] -= G.node[n][quantity]
-        G.node[n]['vehicle'] = vehicles[0]
-        capacity[vehicles[0]][index] += G.node[n][quantity]
+    if G.node[n][utils.VEHICLE] != vehicles[0]:
+        index = 0 if G.node[n][utils.NODE_TYPE] == utils.SUPPLIER else 1
+        capacity[G.node[n][utils.VEHICLE]][index] -= G.node[n][utils.QUANTITY]
+        G.node[n][utils.VEHICLE] = vehicles[0]
+        capacity[vehicles[0]][index] += G.node[n][utils.QUANTITY]
     for i in range(3):
         duration[vehicles[i]] = new_durations[i]
         pair_index = 0 if best == 1 else 1
-        G.node[cross_dock][cons][vehicles[0]][best] = new_consolidations[0]
-        G.node[cross_dock][cons][vehicles[1]][best] = new_consolidations[1]
-        G.node[cross_dock][cons][vehicles[2]][pair_index] = new_consolidations[2]
+        G.node[cross_dock][utils.CONSOLIDATION][vehicles[0]][best] = new_consolidations[0]
+        G.node[cross_dock][utils.CONSOLIDATION][vehicles[1]][best] = new_consolidations[1]
+        G.node[cross_dock][utils.CONSOLIDATION][vehicles[2]][pair_index] = new_consolidations[2]
 
 
 def update_edges(G, best_neighbor, dist, frequency, pickup):
@@ -477,18 +442,18 @@ def update_edges(G, best_neighbor, dist, frequency, pickup):
     if pred != succ:
         frequency[(pred, succ)] += 1
         G.add_edge(pred, succ, weight=dist[pred][succ], type=node_type,
-                   vehicle=G.node[n]['vehicle'])
+                   vehicle=G.node[n][utils.VEHICLE])
     G.add_edge(u, n, weight=dist[u][n], type=node_type, vehicle=vehicle)
     G.add_edge(n, v, weight=dist[n][v], type=node_type, vehicle=vehicle)
     frequency[(u, n)] += 1
     frequency[(n, v)] += 1
-    if node_type == 'pickup':
-        if G.node[n]['vehicle'] == vehicle:
+    if node_type == utils.SUPPLIER:
+        if G.node[n][utils.VEHICLE] == vehicle:
             pickup[vehicle] += dist[u][n] + dist[n][v] + (
                  - dist[u][v] - dist[n][succ] - dist[pred][n] + dist[pred][succ])
         else:
             pickup[vehicle] += dist[u][n] + dist[n][v] - dist[u][v]
-            pickup[G.node[n]['vehicle']] += - dist[n][succ] - dist[pred][n] + dist[pred][succ]
+            pickup[G.node[n][utils.VEHICLE]] += - dist[n][succ] - dist[pred][n] + dist[pred][succ]
 
 
 class TimeChecker:
@@ -498,7 +463,7 @@ class TimeChecker:
     """
 
     def __init__(self, G, cross_dock, vehicle, previous_vehicle, pair_vehicle,
-                 node, duration, node_type, cons):
+                 node, duration):
         self.G = G
         self.vehicle = vehicle
         self.node = node
@@ -508,8 +473,8 @@ class TimeChecker:
         self.new_vehicle_dur = 0
         self.previous_vehicle_dur = 0
         self.pair_vehicle_dur = 0
-        self.type = G.node[self.node][node_type]
-        self.consolidation = self.G.node[cross_dock][cons]
+        self.type = G.node[self.node][utils.NODE_TYPE]
+        self.consolidation = self.G.node[cross_dock][utils.CONSOLIDATION]
 
     def is_feasible(self, dist, u, v, quantity, load, T, pickup):
         """
@@ -618,7 +583,7 @@ class TimeChecker:
     def init_cd_consolidations(self):
         """Initialize number of loads/unloads at the cross-dock for every
         vehicle."""
-        index, pair_index = (0, 1) if self.type == 'pickup' else (1, 0)
+        index, pair_index = (0, 1) if self.type == utils.SUPPLIER else (1, 0)
         self.consolidation_vehicle = self.consolidation[self.vehicle][index]
         self.consolidation_pair = self.consolidation[self.pair_vehicle][
             pair_index]
@@ -672,12 +637,12 @@ class TimeChecker:
                                 - dist[self.node][succ] + dist[pred][succ]
         if self.vehicle != self.pair_vehicle:
             pair_pick = pickup_tour[self.previous_vehicle] + variation_pair\
-                if self.pair_vehicle == self.previous_vehicle and self.type == 'pickup'\
+                if self.pair_vehicle == self.previous_vehicle and self.type == utils.SUPPLIER\
                 else pickup_tour[self.pair_vehicle]
-            pick = pickup_tour[self.vehicle] + variation_vehicle if self.type == 'pickup'\
+            pick = pickup_tour[self.vehicle] + variation_vehicle if self.type == utils.SUPPLIER\
                 else pickup_tour[self.vehicle]
-            if self.type == 'pickup' and 0 < pair_pick < pick:
+            if self.type == utils.SUPPLIER and 0 < pair_pick < pick:
                 return False
-            if self.type == 'delivery' and 0 < pick < pair_pick:
+            if self.type == utils.CUSTOMER and 0 < pick < pair_pick:
                 return False
         return True
